@@ -19,6 +19,25 @@ import { SystemHealthCheck } from './health/system.health.js';
     level: 'info'
   }
 })
+
+@McpApp({
+  module: AppModule,
+  transport: {
+    type: 'http',
+    http: {
+      host: '0.0.0.0',
+      port: Number(process.env.PORT || 3000),
+    },
+  },
+  server: {
+    name: 'flight-recovery-mcp',
+    version: '1.0.0',
+  },
+  logging: {
+    level: 'info',
+  },
+})
+
 @Module({
   name: 'app',
   description: 'Root application module',
