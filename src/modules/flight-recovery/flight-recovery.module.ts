@@ -3,7 +3,8 @@ import { FlightRecoveryTools } from './flight-recovery.tools.js';
 
 @Module({
   name: 'flight-recovery',
-  description: 'Mock-data tools for recovering from flight disruptions',
+  description:
+    'Synthetic-data tools for the flight recovery workflow: assess disruption, map blast radius, rank alternatives, and plan recovery.',
   controllers: [FlightRecoveryTools]
 })
 export class FlightRecoveryModule {}
