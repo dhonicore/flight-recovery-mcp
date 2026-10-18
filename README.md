@@ -12,7 +12,7 @@ The server exposes four tools that are intended to be called in sequence:
 2. `map_blast_radius` — identify synthetic downstream commitments that may be
    affected.
 3. `rank_alternates` — rank synthetic alternative flights by
-   `earliest_arrival` or `lowest_delay`.
+   `protect_meeting`, `earliest_arrival`, or `lowest_cost`.
 4. `plan_recovery` — produce a consolidated recovery plan with a clear
    recommendation and actionable next steps.
 
