@@ -55,3 +55,15 @@ uploads/
 *.pem
 *.key
 tokens.json
+brag-output/
+.nitrostudio/
+
+# Agent skill folders (kept locally, not tracked)
+.agents/
+.antigravity/
+.claude/
+.codex/
+.copilot/
+.cursor/
+.gemini/
+.opencode/

@@ -1,12 +1,9 @@
 # Flight Recovery MCP
 
-When a flight is cancelled, the airline app tells you the flight is gone but not what else breaks. Flight Recovery MCP joins three mock sources—airline status and alternates, traveller commitments, and transfer buffer—so an AI agent can map the impact, rank replacement flights against what matters most, and return a specific proposed plan.
+A cancelled flight breaks more than the flight: it ripples into hotel check-in, a client dinner, and the morning meeting. This MCP server lets an AI agent map the impact, rank replacement flights, and propose a recovery plan in one prompt.
 
-## Demo
-
-- **Demo video:** `TODO_VIDEO_URL`
-- **Live MCP URL:** `TODO_LIVE_URL`
-- **GitHub repo:** <https://github.com/dhonicore/flight-recovery-mcp>
+- **Live MCP URL:** `<RENDER_URL>`
+- **Demo video:** `<VIDEO_URL>`
 
 ## Tools (call in order)
 
@@ -23,62 +20,60 @@ My flight DEMO-BLR-DEL-001 just got cancelled. I have a client dinner, a hotel w
 
 Expected tool chain: `assess_disruption` → `map_blast_radius` → `rank_alternates` → `plan_recovery`.
 
+## Fixtures
+
+Disrupted flights:
+
+- `DEMO-BLR-DEL-001` — cancelled morning BLR→DEL flight.
+- `DEMO-BLR-DEL-002` — delayed afternoon BLR→DEL flight.
+
+Replacement alternates:
+
+- `MOCK-ALT-101` — one stop, high connection risk, earliest arrival.
+- `MOCK-ALT-102` — nonstop, low risk, protects the meeting.
+- `MOCK-ALT-103` — nonstop, low risk, lowest cost, latest arrival.
+
+All dates and times are generated relative to today (IST) so the fixtures never go stale.
+
 ## Priority table
 
 | Priority | Top choice | Why |
 |---|---|---|
-| `protect_meeting` (default) | `MOCK-ALT-102` | Nonstop; keeps the meeting and hotel check-in. |
+| `protect_meeting` (default) | `MOCK-ALT-102` | Nonstop; keeps the downstream meeting and hotel check-in. |
 | `earliest_arrival` | `MOCK-ALT-101` | Arrives earliest, but the short connection puts commitments at risk. |
-| `lowest_cost` | `MOCK-ALT-103` | Cheapest nonstop option; misses dinner and hotel check-in. |
-
-## Synthetic alternates
-
-| ID | Departure | Arrival | Stops | Connection risk | Cost (USD) |
-|---|---|---|---|---|---|
-| `MOCK-ALT-101` | Day +2, 14:00 IST | Day +2, 18:30 IST | 1 | High (30 min connection) | 180 |
-| `MOCK-ALT-102` | Day +2, 18:15 IST | Day +2, 20:30 IST | 0 | Low | 220 |
-| `MOCK-ALT-103` | Day +2, 23:30 IST | Day +3, 07:00 IST | 0 | Low | 95 |
-
-All times are generated relative to the current IST date, so fixtures never go stale.
+| `lowest_cost` | `MOCK-ALT-103` | Cheapest listed option; misses dinner and hotel check-in. |
 
 ## How to connect
 
-Connect any MCP client to the HTTP transport:
+Add the MCP URL as a custom connector in Claude:
 
-```text
-http://<host>:<port>/mcp
-```
+`Customize` > `Connectors` > `Add custom connector`
 
-Or legacy SSE:
+## Production path (not implemented)
 
-```text
-http://<host>:<port>/sse
-```
+| Domain | Planned integration | Status |
+|---|---|---|
+| Flight status | Flight-status API | not implemented |
+| Calendar | Google Calendar via OAuth | not implemented |
+| Hotel | Hotel partner API | not implemented |
+| Rebooking | Airline/GDS partner API with user approval | not implemented |
 
-## Data notice
+## Synthetic-data note
 
-All data is synthetic. This server does not query live airline systems, schedules, availability, fares, booking records, hotel systems, or calendars. Every action returned is a proposal that requires user approval (`requires_user_approval: true`, `executed: false`).
+All data is mock. Nothing is booked or sent. Every action returned is a proposal that needs user approval.
 
-## Common commands
+## Local commands
 
 ```bash
+npm install
+npm run dev
 npm run build
+npm start
 npm run check   # domain-level assertions
-npm run dev     # local development
-npm start       # production server
 ```
-
-## What's next
-
-- Real airline schedule and rebooking APIs.
-- Calendar and hotel connector integrations.
-- Live policy/entitlement checks.
-
-## Deployment
-
-This project is configured for HTTP transport on `0.0.0.0` and the port provided by the `PORT` environment variable (default `3000`).
 
 ## Links
 
+- GitHub repo: <https://github.com/dhonicore/flight-recovery-mcp>
 - Docs: <https://docs.nitrostack.ai>
 - NitroStudio: <https://nitrostack.ai/studio>
