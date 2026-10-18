@@ -6,6 +6,7 @@ import { ToolDecorator as Tool, ExecutionContext, z } from '@nitrostack/core';
  */
 
 const DEMO_SCENARIO_TIME = '2026-10-17T21:00:00+05:30' as const;
+const MEETING_DEADLINE = '2026-10-19T09:30:00+05:30' as const;
 
 const MOCK_FLIGHTS = {
   'DEMO-BLR-DEL-001': {
@@ -33,26 +34,45 @@ const MOCK_FLIGHTS = {
 } as const;
 
 type MockFlightId = keyof typeof MOCK_FLIGHTS;
-type RecoveryPriority = 'earliest_arrival' | 'lowest_delay';
+type RecoveryPriority = 'protect_meeting' | 'earliest_arrival' | 'lowest_cost';
 
 /**
- * Synthetic alternative flights for next-day rebooking.
- * Moved to 2026-10-18 so they remain in the future relative to the
- * demo scenario time (2026-10-17T21:00:00+05:30).
+ * Synthetic alternative flights for rebooking after the disruption.
+ * All times are ISO 8601 with explicit IST (+05:30) offsets.
+ *
+ * A = MOCK-ALT-101: arrives earliest but has a fragile connection.
+ * B = MOCK-ALT-102: later direct option that best protects the meeting.
+ * C = MOCK-ALT-103: lowest-cost direct option arriving the next morning.
  */
 const MOCK_ALTERNATIVES = [
   {
     flight_id: 'MOCK-ALT-101',
     route: { origin: 'BLR', destination: 'DEL' },
-    departure: '2026-10-18T17:00:00+05:30',
-    arrival: '2026-10-18T19:45:00+05:30',
-    estimated_delay_minutes: 30
+    departure: '2026-10-18T14:00:00+05:30',
+    arrival: '2026-10-18T18:30:00+05:30',
+    stops: 1,
+    connection_risk: 'high' as const,
+    synthetic_cost_usd: 180,
+    estimated_delay_minutes: 0
   },
   {
     flight_id: 'MOCK-ALT-102',
     route: { origin: 'BLR', destination: 'DEL' },
     departure: '2026-10-18T18:15:00+05:30',
     arrival: '2026-10-18T20:30:00+05:30',
+    stops: 0,
+    connection_risk: 'low' as const,
+    synthetic_cost_usd: 220,
+    estimated_delay_minutes: 0
+  },
+  {
+    flight_id: 'MOCK-ALT-103',
+    route: { origin: 'BLR', destination: 'DEL' },
+    departure: '2026-10-18T23:30:00+05:30',
+    arrival: '2026-10-19T07:00:00+05:30',
+    stops: 0,
+    connection_risk: 'low' as const,
+    synthetic_cost_usd: 95,
     estimated_delay_minutes: 0
   }
 ] as const;
@@ -72,7 +92,8 @@ function getAffectedCommitments(status: 'cancelled' | 'delayed') {
         },
         {
           commitment: 'Downstream meeting',
-          impact: 'The planned arrival may no longer allow enough travel time',
+          impact:
+            'The planned arrival may no longer allow enough time before the 19 Oct 09:30 IST meeting',
           severity: 'high'
         }
       ]
@@ -89,10 +110,17 @@ function getAffectedCommitments(status: 'cancelled' | 'delayed') {
         },
         {
           commitment: 'Downstream meeting',
-          impact: 'The delay may reduce the available buffer before the meeting',
+          impact:
+            'The delay may reduce the buffer before the 19 Oct 09:30 IST meeting',
           severity: 'high'
         }
       ];
+}
+
+function minutesUntilMeeting(arrivalIso: string) {
+  return Math.round(
+    (Date.parse(MEETING_DEADLINE) - Date.parse(arrivalIso)) / 60_000
+  );
 }
 
 function rankAlternatives(priority: RecoveryPriority) {
@@ -101,18 +129,59 @@ function rankAlternatives(priority: RecoveryPriority) {
       if (priority === 'earliest_arrival') {
         return Date.parse(a.arrival) - Date.parse(b.arrival);
       }
-      return a.estimated_delay_minutes - b.estimated_delay_minutes;
+
+      if (priority === 'lowest_cost') {
+        return a.synthetic_cost_usd - b.synthetic_cost_usd;
+      }
+
+      // protect_meeting: prefer direct flights, then earlier arrival (more buffer).
+      const riskScore = (alt: typeof MOCK_ALTERNATIVES[number]) =>
+        alt.connection_risk === 'high' ? 1 : 0;
+      const riskDiff = riskScore(a) - riskScore(b);
+      if (riskDiff !== 0) return riskDiff;
+      return Date.parse(a.arrival) - Date.parse(b.arrival);
     })
-    .map((alternative, index) => ({
-      rank: index + 1,
-      ...alternative,
-      reason:
-        priority === 'earliest_arrival'
-          ? 'Ranked by earliest listed arrival time.'
-          : 'Ranked by lowest listed estimated delay.'
-    }));
+    .map((alternative, index) => {
+      const bufferMinutes = minutesUntilMeeting(alternative.arrival);
+      let reason: string;
+
+      if (priority === 'earliest_arrival') {
+        reason = 'Ranked by earliest listed arrival time.';
+      } else if (priority === 'lowest_cost') {
+        reason = `Ranked by lowest listed synthetic cost (USD ${alternative.synthetic_cost_usd}).`;
+      } else {
+        // protect_meeting
+        if (alternative.flight_id === 'MOCK-ALT-102') {
+          reason = `Direct flight with the largest buffer (${bufferMinutes} minutes) before the 19 Oct 09:30 IST meeting.`;
+        } else if (alternative.flight_id === 'MOCK-ALT-103') {
+          reason = `Direct flight arriving the morning of the meeting, leaving a smaller buffer (${bufferMinutes} minutes).`;
+        } else {
+          reason = `Arrives earlier but has a fragile connection; connection failure could miss the 19 Oct 09:30 IST meeting.`;
+        }
+      }
+
+      return {
+        rank: index + 1,
+        ...alternative,
+        meeting_buffer_minutes: bufferMinutes,
+        reason
+      };
+    });
 
   return ranked;
+}
+
+function recommendationReason(
+  priority: RecoveryPriority,
+  topAlternative: ReturnType<typeof rankAlternatives>[number]
+) {
+  if (priority === 'earliest_arrival') {
+    return 'Earliest listed arrival among the synthetic alternatives for the chosen priority.';
+  }
+  if (priority === 'lowest_cost') {
+    return `Lowest listed synthetic cost (USD ${topAlternative.synthetic_cost_usd}) among the synthetic alternatives for the chosen priority.`;
+  }
+  return `Direct flight with the largest buffer (${topAlternative.meeting_buffer_minutes} minutes) before the 19 Oct 09:30 IST meeting.`;
 }
 
 export class FlightRecoveryTools {
@@ -236,17 +305,19 @@ export class FlightRecoveryTools {
   @Tool({
     name: 'rank_alternates',
     description:
-      'Step 3 in the recovery workflow. Rank synthetic alternative flights by earliest arrival or lowest delay. Does not check live schedules, availability, or fares.',
+      'Step 3 in the recovery workflow. Rank synthetic alternative flights by protect_meeting, earliest_arrival, or lowest_cost. Does not check live schedules, availability, or fares.',
     inputSchema: z.object({
       flight_id: z.enum(['DEMO-BLR-DEL-001', 'DEMO-BLR-DEL-002']),
       priority: z
-        .enum(['earliest_arrival', 'lowest_delay'])
-        .describe('What matters most to the traveller.')
+        .enum(['protect_meeting', 'earliest_arrival', 'lowest_cost'])
+        .describe(
+          'What matters most to the traveller. protect_meeting = prefer direct flights with the largest buffer before the 19 Oct 09:30 IST meeting.'
+        )
     }),
     examples: {
       request: {
         flight_id: 'DEMO-BLR-DEL-001',
-        priority: 'earliest_arrival'
+        priority: 'protect_meeting'
       },
       response: {
         data_source: 'mock_fixture',
@@ -254,16 +325,21 @@ export class FlightRecoveryTools {
           'Synthetic alternatives only. Flight schedules, seat availability, fares, and rebooking eligibility have not been verified.',
         disrupted_flight_id: 'DEMO-BLR-DEL-001',
         disrupted_flight_status: 'cancelled',
-        ranking_priority: 'earliest_arrival',
+        ranking_priority: 'protect_meeting',
         ranked_alternatives: [
           {
             rank: 1,
-            flight_id: 'MOCK-ALT-101',
+            flight_id: 'MOCK-ALT-102',
             route: { origin: 'BLR', destination: 'DEL' },
-            departure: '2026-10-18T17:00:00+05:30',
-            arrival: '2026-10-18T19:45:00+05:30',
-            estimated_delay_minutes: 30,
-            reason: 'Ranked by earliest listed arrival time.'
+            departure: '2026-10-18T18:15:00+05:30',
+            arrival: '2026-10-18T20:30:00+05:30',
+            stops: 0,
+            connection_risk: 'low',
+            synthetic_cost_usd: 220,
+            estimated_delay_minutes: 0,
+            meeting_buffer_minutes: 780,
+            reason:
+              'Direct flight with the largest buffer (780 minutes) before the 19 Oct 09:30 IST meeting.'
           }
         ],
         next_step:
@@ -307,19 +383,22 @@ export class FlightRecoveryTools {
     inputSchema: z.object({
       flight_id: z.enum(['DEMO-BLR-DEL-001', 'DEMO-BLR-DEL-002']),
       priority: z
-        .enum(['earliest_arrival', 'lowest_delay'])
-        .describe('Traveller priority for ranking alternative flights.')
+        .enum(['protect_meeting', 'earliest_arrival', 'lowest_cost'])
+        .describe(
+          'Traveller priority for ranking alternative flights. protect_meeting = prefer direct flights with the largest buffer before the 19 Oct 09:30 IST meeting.'
+        )
     }),
     examples: {
       request: {
         flight_id: 'DEMO-BLR-DEL-001',
-        priority: 'earliest_arrival'
+        priority: 'protect_meeting'
       },
       response: {
         data_source: 'mock_fixture',
         notice:
           'Demonstration plan based entirely on synthetic data. Alternative flights, actual commitments, live availability, fares, rebooking eligibility, and passenger entitlements have not been verified.',
         scenario_time: '2026-10-17T21:00:00+05:30',
+        meeting_deadline: '2026-10-19T09:30:00+05:30',
         disruption: {
           flight_id: 'DEMO-BLR-DEL-001',
           route: { origin: 'BLR', destination: 'DEL' },
@@ -345,25 +424,30 @@ export class FlightRecoveryTools {
           }
         ],
         alternative_options: {
-          ranking_priority: 'earliest_arrival',
+          ranking_priority: 'protect_meeting',
           ranked_alternatives: [
             {
               rank: 1,
-              flight_id: 'MOCK-ALT-101',
+              flight_id: 'MOCK-ALT-102',
               route: { origin: 'BLR', destination: 'DEL' },
-              departure: '2026-10-18T17:00:00+05:30',
-              arrival: '2026-10-18T19:45:00+05:30',
-              estimated_delay_minutes: 30,
-              reason: 'Ranked by earliest listed arrival time.'
+              departure: '2026-10-18T18:15:00+05:30',
+              arrival: '2026-10-18T20:30:00+05:30',
+              stops: 0,
+              connection_risk: 'low',
+              synthetic_cost_usd: 220,
+              estimated_delay_minutes: 0,
+              meeting_buffer_minutes: 780,
+              reason:
+                'Direct flight with the largest buffer (780 minutes) before the 19 Oct 09:30 IST meeting.'
             }
           ]
         },
         recommendation: {
-          recommended_flight_id: 'MOCK-ALT-101',
+          recommended_flight_id: 'MOCK-ALT-102',
           reason:
-            'Earliest listed arrival among the synthetic alternatives for the chosen priority.',
-          estimated_departure: '2026-10-18T17:00:00+05:30',
-          estimated_arrival: '2026-10-18T19:45:00+05:30'
+            'Direct flight with the largest buffer (780 minutes) before the 19 Oct 09:30 IST meeting.',
+          estimated_departure: '2026-10-18T18:15:00+05:30',
+          estimated_arrival: '2026-10-18T20:30:00+05:30'
         },
         recommended_actions: [
           'Confirm the disruption with the airline or booking provider.',
@@ -400,6 +484,7 @@ export class FlightRecoveryTools {
       notice:
         'Demonstration plan based entirely on synthetic data. Alternative flights, actual commitments, live availability, fares, rebooking eligibility, and passenger entitlements have not been verified.',
       scenario_time: DEMO_SCENARIO_TIME,
+      meeting_deadline: MEETING_DEADLINE,
       disruption: {
         flight_id: flight.flight_id,
         route: flight.route,
@@ -427,19 +512,19 @@ export class FlightRecoveryTools {
         },
         {
           commitment: 'Hotel check-in',
-          fixture_scheduled_time: '2026-10-17T15:00:00+05:30',
+          fixture_scheduled_time: '2026-10-18T22:00:00+05:30',
           buffer_minutes: 0,
           status: 'at_risk',
           reason:
-            'Fixture check-in at 15:00 IST is before the 21:00 IST scenario time and may already be missed; next-day arrival likely requires rescheduling.'
+            'Fixture check-in is planned for the rebooking day; confirm availability if arriving late on 18 Oct.'
         },
         {
           commitment: 'Downstream meeting',
-          fixture_scheduled_time: '2026-10-17T19:00:00+05:30',
-          buffer_minutes: 60,
+          fixture_scheduled_time: MEETING_DEADLINE,
+          buffer_minutes: 0,
           status: 'at_risk',
           reason:
-            'Fixture meeting at 19:00 IST is before the 21:00 IST scenario time and has likely been missed; reschedule after rebooking.'
+            'Fixture meeting at 09:30 IST on 19 Oct is the hard deadline; choose an alternative that arrives with enough buffer.'
         }
       ],
       alternative_options: {
@@ -448,10 +533,7 @@ export class FlightRecoveryTools {
       },
       recommendation: {
         recommended_flight_id: topAlternative.flight_id,
-        reason:
-          input.priority === 'earliest_arrival'
-            ? 'Earliest listed arrival among the synthetic alternatives for the chosen priority.'
-            : 'Lowest listed estimated delay among the synthetic alternatives for the chosen priority.',
+        reason: recommendationReason(input.priority, topAlternative),
         estimated_departure: topAlternative.departure,
         estimated_arrival: topAlternative.arrival
       },
