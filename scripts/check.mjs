@@ -14,6 +14,7 @@ import {
   getDinnerDeadline,
   getOriginalTransferPickupTime
 } from '../dist/modules/flight-recovery/flight-recovery.domain.js';
+import { FlightRecoveryTools } from '../dist/modules/flight-recovery/flight-recovery.tools.js';
 
 function assert(condition, message) {
   if (!condition) {
@@ -135,12 +136,121 @@ function assertWorstCase() {
   console.log('✓ Worst-case consequence is encoded for fragile connections.');
 }
 
-function run() {
+function collectStrings(obj, path = '', strings = []) {
+  if (obj === null || obj === undefined) return strings;
+  if (typeof obj === 'string') {
+    strings.push({ path, value: obj });
+    return strings;
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach((item, i) => collectStrings(item, `${path}[${i}]`, strings));
+    return strings;
+  }
+  if (typeof obj === 'object') {
+    for (const [key, value] of Object.entries(obj)) {
+      collectStrings(value, path ? `${path}.${key}` : key, strings);
+    }
+    return strings;
+  }
+  return strings;
+}
+
+async function assertToolOutputs() {
+  const mockCtx = {
+    logger: {
+      info: () => {},
+      error: () => {},
+      warn: () => {}
+    }
+  };
+  const tools = new FlightRecoveryTools();
+
+  const step1 = await tools.assessDisruption({ flight_id: 'DEMO-BLR-DEL-001' }, mockCtx);
+  const step2 = await tools.mapBlastRadius({ flight_id: 'DEMO-BLR-DEL-001' }, mockCtx);
+  const step3 = await tools.rankAlternates(
+    { flight_id: 'DEMO-BLR-DEL-001', priority: 'protect_meeting' },
+    mockCtx
+  );
+  const step4 = await tools.planRecovery(
+    { flight_id: 'DEMO-BLR-DEL-001', priority: 'protect_meeting' },
+    mockCtx
+  );
+
+  const allOutputs = { step1, step2, step3, step4 };
+  const strings = collectStrings(allOutputs);
+  const badTimestamps = strings.filter(
+    (s) => s.value.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/) || s.value.endsWith('Z')
+  );
+
+  assert(
+    badTimestamps.length === 0,
+    `Output timestamps must not end with 'Z': ${badTimestamps
+      .map((s) => `${s.path}=${s.value}`)
+      .join(', ')}`
+  );
+
+  // Every timestamp-like field should have a matching _display sibling.
+  function assertDisplayPair(obj, path = '') {
+    if (obj === null || obj === undefined || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      obj.forEach((item, i) => assertDisplayPair(item, `${path}[${i}]`));
+      return;
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      const currentPath = path ? `${path}.${key}` : key;
+      if (
+        typeof value === 'string' &&
+        value.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+      ) {
+        const displayKey = `${key}_display`;
+        assert(
+          displayKey in obj,
+          `Missing ${displayKey} for timestamp at ${currentPath}`
+        );
+        assert(
+          obj[displayKey].includes('IST'),
+          `Display field ${displayKey} must include 'IST' at ${currentPath}`
+        );
+      }
+      assertDisplayPair(value, currentPath);
+    }
+  }
+
+  assertDisplayPair(allOutputs);
+
+  // Priority / recommendation consistency
+  assertEqual(step3.priority_used, 'protect_meeting', 'rank_alternates must include priority_used');
+  assertEqual(step4.priority_used, 'protect_meeting', 'plan_recovery must include priority_used');
+  assertEqual(
+    step3.recommended_alternate_id,
+    step3.ranking[0].id,
+    'recommended_alternate_id must equal ranking[0]'
+  );
+  assertEqual(
+    step4.recommended_alternate_id,
+    step4.ranking[0].id,
+    'recommended_alternate_id must equal ranking[0]'
+  );
+  assertEqual(
+    step4.recommended_alternate_id,
+    'MOCK-ALT-102',
+    'recommended_alternate_id should be MOCK-ALT-102 for protect_meeting'
+  );
+
+  console.log('✓ Tool outputs use +05:30 timestamps with IST display fields.');
+  console.log('✓ priority_used and recommended_alternate_id are consistent.');
+}
+
+async function run() {
   assertAllFuture();
   assertRankingOutcomes();
   assertVerdictFields();
   assertWorstCase();
+  await assertToolOutputs();
   console.log('\nAll checks passed.');
 }
 
-run();
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

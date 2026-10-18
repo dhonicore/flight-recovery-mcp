@@ -17,7 +17,8 @@ import {
   computeCommitmentStatuses,
   buildRecoveryActions,
   createNotFoundError,
-  formatFullTime
+  formatFullTime,
+  toDisplay
 } from './flight-recovery.domain.js';
 
 const PRIORITY_SCHEMA = z
@@ -160,7 +161,7 @@ export class FlightRecoveryTools {
   @Tool({
     name: 'rank_alternates',
     description:
-      'STEP 3. Ranks three replacement flights, shows what each keeps or loses, and returns one recommended option. Use priority protect_meeting when the user says a commitment matters most. Call after map_blast_radius.',
+      'STEP 3. Ranks three replacement flights, shows what each keeps or loses, and returns one recommended option. Default: protect_meeting. Use earliest_arrival or lowest_cost ONLY if the user explicitly asks for the fastest or cheapest option. Call after map_blast_radius.',
     inputSchema: z.object({
       flight_id: z.string().describe('Synthetic flight identifier.'),
       priority: PRIORITY_SCHEMA
@@ -231,7 +232,7 @@ export class FlightRecoveryTools {
   @Tool({
     name: 'plan_recovery',
     description:
-      'STEP 4. Returns specific ordered proposed actions for the recommended or chosen replacement flight. Proposals only; nothing is executed. Call last.',
+      'STEP 4. Returns specific ordered proposed actions for the recommended or chosen replacement flight. Default: protect_meeting. Use earliest_arrival or lowest_cost ONLY if the user explicitly asks for the fastest or cheapest option. Proposals only; nothing is executed. Call last.',
     inputSchema: z.object({
       flight_id: z.string().describe('Synthetic flight identifier.'),
       priority: PRIORITY_SCHEMA,
@@ -300,36 +301,8 @@ export class FlightRecoveryTools {
         ? 'Chosen option differs from the recommended one.'
         : undefined;
 
-    const { statuses } = computeCommitmentStatuses(
-      {
-        flight_id: chosenAlternate.flight_id,
-        route: chosenAlternate.route,
-        departure: chosenAlternate.departure,
-        arrival: chosenAlternate.arrival,
-        stops: chosenAlternate.stops,
-        connection_risk: chosenAlternate.connection_risk,
-        connection_buffer_min: chosenAlternate.connection_buffer_min,
-        worst_case_arrival: chosenAlternate.worst_case_arrival,
-        synthetic_cost_usd: chosenAlternate.synthetic_cost_usd,
-        estimated_delay_minutes: chosenAlternate.estimated_delay_minutes
-      }
-    );
-
-    const actions = buildRecoveryActions(
-      {
-        flight_id: chosenAlternate.flight_id,
-        route: chosenAlternate.route,
-        departure: chosenAlternate.departure,
-        arrival: chosenAlternate.arrival,
-        stops: chosenAlternate.stops,
-        connection_risk: chosenAlternate.connection_risk,
-        connection_buffer_min: chosenAlternate.connection_buffer_min,
-        worst_case_arrival: chosenAlternate.worst_case_arrival,
-        synthetic_cost_usd: chosenAlternate.synthetic_cost_usd,
-        estimated_delay_minutes: chosenAlternate.estimated_delay_minutes
-      },
-      statuses
-    );
+    const { statuses } = computeCommitmentStatuses(chosenAlternate);
+    const actions = buildRecoveryActions(chosenAlternate, statuses);
 
     ctx.logger.info('Created synthetic flight recovery plan', {
       flight_id: input.flight_id,
@@ -348,16 +321,22 @@ export class FlightRecoveryTools {
       ranking,
       presentation_note: PRESENTATION_NOTE,
       scenario_time: getScenarioTime(),
+      scenario_time_display: toDisplay(getScenarioTime()),
       meeting_deadline: getMeetingDeadline(),
+      meeting_deadline_display: toDisplay(getMeetingDeadline()),
       disruption: {
         flight_id: flight.flight_id,
         route: flight.route,
         status: flight.status,
         reported_cause: flight.reported_cause,
         scheduled_departure: flight.scheduled_departure,
+        scheduled_departure_display: flight.scheduled_departure_display,
         scheduled_arrival: flight.scheduled_arrival,
+        scheduled_arrival_display: flight.scheduled_arrival_display,
         estimated_departure: flight.estimated_departure,
+        estimated_departure_display: flight.estimated_departure_display,
         estimated_arrival: flight.estimated_arrival,
+        estimated_arrival_display: flight.estimated_arrival_display,
         delay_minutes: flight.delay_minutes
       },
       impact_assessment: {
@@ -376,7 +355,9 @@ export class FlightRecoveryTools {
         recommended_flight_id: recommended?.id ?? null,
         reason: generateDecisionRule(input.priority, ranking),
         estimated_departure: chosenAlternate.departure,
-        estimated_arrival: chosenAlternate.arrival
+        estimated_departure_display: chosenAlternate.departure_display,
+        estimated_arrival: chosenAlternate.arrival,
+        estimated_arrival_display: chosenAlternate.arrival_display
       },
       recommended_actions: actions,
       entitlement_status: 'not_verified',

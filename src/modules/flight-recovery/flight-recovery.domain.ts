@@ -22,21 +22,53 @@ const HOTEL_BUFFER_MIN = 60;
 const MEETING_BUFFER_MIN = 90;
 const FRAGILE_CONNECTION_MAX_MIN = 44;
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
 /**
- * Build an ISO 8601 UTC timestamp for a given IST offset-date and wall-clock time.
+ * Format a UTC Date as an ISO 8601 string with explicit +05:30 offset.
+ */
+function toISTOffset(d: Date): string {
+  const year = d.getUTCFullYear();
+  const month = pad2(d.getUTCMonth() + 1);
+  const day = pad2(d.getUTCDate());
+  const hour = pad2(d.getUTCHours());
+  const minute = pad2(d.getUTCMinutes());
+  const second = pad2(d.getUTCSeconds());
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}+05:30`;
+}
+
+/**
+ * Build an ISO 8601 timestamp with explicit +05:30 offset for a given IST
+ * offset-date and wall-clock time.
  * @param offset days from today (IST)
  * @param hhmm   "HH:MM" IST
  */
 export function at(offset: number, hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
   const d = new Date(Date.now() + 5.5 * 3600e3);
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + offset, h - 5, m - 30)
-  ).toISOString();
+  return toISTOffset(
+    new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + offset, h - 5, m - 30))
+  );
 }
 
 export function getScenarioTime(): string {
-  return new Date().toISOString();
+  return toISTOffset(new Date());
+}
+
+export function toDisplay(iso: string): string {
+  const d = new Date(iso);
+  const weekday = d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
+  const day = d.toLocaleDateString('en-IN', { day: 'numeric', timeZone: 'Asia/Kolkata' });
+  const month = d.toLocaleDateString('en-IN', { month: 'short', timeZone: 'Asia/Kolkata' });
+  const time = d.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Kolkata'
+  });
+  return `${weekday} ${day} ${month}, ${time} IST`;
 }
 
 export function getMeetingDeadline(): string {
@@ -59,11 +91,15 @@ export type MockFlight = {
   flight_id: string;
   route: { origin: string; destination: string };
   scheduled_departure: string;
+  scheduled_departure_display: string;
   scheduled_arrival: string;
+  scheduled_arrival_display: string;
   status: FlightStatus;
   reported_cause: string;
   estimated_departure: string | null;
+  estimated_departure_display: string | null;
   estimated_arrival: string | null;
+  estimated_arrival_display: string | null;
   delay_minutes: number | null;
 };
 
@@ -73,22 +109,30 @@ export function getMockFlights(): Record<string, MockFlight> {
       flight_id: 'DEMO-BLR-DEL-001',
       route: { origin: 'BLR', destination: 'DEL' },
       scheduled_departure: at(FLIGHT_OFFSET, '06:30'),
+      scheduled_departure_display: toDisplay(at(FLIGHT_OFFSET, '06:30')),
       scheduled_arrival: at(FLIGHT_OFFSET, '09:15'),
+      scheduled_arrival_display: toDisplay(at(FLIGHT_OFFSET, '09:15')),
       status: 'cancelled',
       reported_cause: 'operational_issue',
       estimated_departure: null,
+      estimated_departure_display: null,
       estimated_arrival: null,
+      estimated_arrival_display: null,
       delay_minutes: null
     },
     'DEMO-BLR-DEL-002': {
       flight_id: 'DEMO-BLR-DEL-002',
       route: { origin: 'BLR', destination: 'DEL' },
       scheduled_departure: at(FLIGHT_OFFSET, '14:00'),
+      scheduled_departure_display: toDisplay(at(FLIGHT_OFFSET, '14:00')),
       scheduled_arrival: at(FLIGHT_OFFSET, '16:45'),
+      scheduled_arrival_display: toDisplay(at(FLIGHT_OFFSET, '16:45')),
       status: 'delayed',
       reported_cause: 'weather',
       estimated_departure: at(FLIGHT_OFFSET, '16:00'),
+      estimated_departure_display: toDisplay(at(FLIGHT_OFFSET, '16:00')),
       estimated_arrival: at(FLIGHT_OFFSET, '18:45'),
+      estimated_arrival_display: toDisplay(at(FLIGHT_OFFSET, '18:45')),
       delay_minutes: 120
     }
   };
@@ -98,11 +142,14 @@ export type Alternate = {
   flight_id: string;
   route: { origin: string; destination: string };
   departure: string;
+  departure_display: string;
   arrival: string;
+  arrival_display: string;
   stops: number;
   connection_risk: 'high' | 'low';
   connection_buffer_min: number;
   worst_case_arrival: string | null;
+  worst_case_arrival_display: string | null;
   synthetic_cost_usd: number;
   estimated_delay_minutes: number;
 };
@@ -113,11 +160,14 @@ export function getMockAlternatives(): Alternate[] {
       flight_id: 'MOCK-ALT-101',
       route: { origin: 'BLR', destination: 'DEL' },
       departure: at(ALT_101_102_OFFSET, '14:00'),
+      departure_display: toDisplay(at(ALT_101_102_OFFSET, '14:00')),
       arrival: at(ALT_101_102_OFFSET, '18:30'),
+      arrival_display: toDisplay(at(ALT_101_102_OFFSET, '18:30')),
       stops: 1,
       connection_risk: 'high',
       connection_buffer_min: 30,
       worst_case_arrival: at(ALT_103_MEETING_OFFSET, '11:20'),
+      worst_case_arrival_display: toDisplay(at(ALT_103_MEETING_OFFSET, '11:20')),
       synthetic_cost_usd: 180,
       estimated_delay_minutes: 0
     },
@@ -125,11 +175,14 @@ export function getMockAlternatives(): Alternate[] {
       flight_id: 'MOCK-ALT-102',
       route: { origin: 'BLR', destination: 'DEL' },
       departure: at(ALT_101_102_OFFSET, '18:15'),
+      departure_display: toDisplay(at(ALT_101_102_OFFSET, '18:15')),
       arrival: at(ALT_101_102_OFFSET, '20:30'),
+      arrival_display: toDisplay(at(ALT_101_102_OFFSET, '20:30')),
       stops: 0,
       connection_risk: 'low',
       connection_buffer_min: 0,
       worst_case_arrival: null,
+      worst_case_arrival_display: null,
       synthetic_cost_usd: 220,
       estimated_delay_minutes: 0
     },
@@ -137,11 +190,14 @@ export function getMockAlternatives(): Alternate[] {
       flight_id: 'MOCK-ALT-103',
       route: { origin: 'BLR', destination: 'DEL' },
       departure: at(ALT_101_102_OFFSET, '23:30'),
+      departure_display: toDisplay(at(ALT_101_102_OFFSET, '23:30')),
       arrival: at(ALT_103_MEETING_OFFSET, '07:00'),
+      arrival_display: toDisplay(at(ALT_103_MEETING_OFFSET, '07:00')),
       stops: 0,
       connection_risk: 'low',
       connection_buffer_min: 0,
       worst_case_arrival: null,
+      worst_case_arrival_display: null,
       synthetic_cost_usd: 95,
       estimated_delay_minutes: 0
     }
@@ -209,6 +265,7 @@ export function getOriginalPassengerCommitments() {
     {
       commitment: 'Airport transfer',
       fixture_scheduled_time: getOriginalTransferPickupTime(),
+      fixture_scheduled_time_display: toDisplay(getOriginalTransferPickupTime()),
       buffer_minutes: 30,
       status: 'at_risk' as CommitmentStatus,
       reason:
@@ -217,6 +274,7 @@ export function getOriginalPassengerCommitments() {
     {
       commitment: 'Client dinner',
       fixture_scheduled_time: getDinnerDeadline(),
+      fixture_scheduled_time_display: toDisplay(getDinnerDeadline()),
       buffer_minutes: 0,
       status: 'at_risk' as CommitmentStatus,
       reason: 'Confirm whether the dinner reservation can be kept after rebooking.'
@@ -224,6 +282,7 @@ export function getOriginalPassengerCommitments() {
     {
       commitment: 'Hotel check-in',
       fixture_scheduled_time: getHotelCheckInDeadline(),
+      fixture_scheduled_time_display: toDisplay(getHotelCheckInDeadline()),
       buffer_minutes: 0,
       status: 'at_risk' as CommitmentStatus,
       reason: 'Confirm availability if arriving late on the rebooking day.'
@@ -231,6 +290,7 @@ export function getOriginalPassengerCommitments() {
     {
       commitment: 'Downstream meeting',
       fixture_scheduled_time: getMeetingDeadline(),
+      fixture_scheduled_time_display: toDisplay(getMeetingDeadline()),
       buffer_minutes: 0,
       status: 'at_risk' as CommitmentStatus,
       reason: `The meeting at ${formatShortTime(getMeetingDeadline())} is the hard deadline; choose an alternative that arrives with enough buffer.`
@@ -345,11 +405,14 @@ export type RankedAlternate = {
   flight_id: string;
   route: { origin: string; destination: string };
   departure: string;
+  departure_display: string;
   arrival: string;
+  arrival_display: string;
   stops: number;
   connection_risk: 'high' | 'low';
   connection_buffer_min: number;
   worst_case_arrival: string | null;
+  worst_case_arrival_display: string | null;
   synthetic_cost_usd: number;
   estimated_delay_minutes: number;
   meeting_buffer_minutes: number;
@@ -447,11 +510,14 @@ export function rankAlternatives(priority: RecoveryPriority): RankedAlternate[] 
         flight_id: alt.flight_id,
         route: alt.route,
         departure: alt.departure,
+        departure_display: alt.departure_display,
         arrival: alt.arrival,
+        arrival_display: alt.arrival_display,
         stops: alt.stops,
         connection_risk: alt.connection_risk,
         connection_buffer_min: alt.connection_buffer_min,
         worst_case_arrival: alt.worst_case_arrival,
+        worst_case_arrival_display: alt.worst_case_arrival_display,
         synthetic_cost_usd: alt.synthetic_cost_usd,
         estimated_delay_minutes: alt.estimated_delay_minutes,
         meeting_buffer_minutes: bufferMinutes,
